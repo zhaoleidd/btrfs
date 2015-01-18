@@ -117,9 +117,9 @@ static struct btrfs_qgroup *find_qgroup_rb(struct btrfs_fs_info *fs_info,
 	while (n) {
 		qgroup = rb_entry(n, struct btrfs_qgroup, node);
 		if (qgroup->qgroupid < qgroupid)
-			n = n->rb_left;
-		else if (qgroup->qgroupid > qgroupid)
 			n = n->rb_right;
+		else if (qgroup->qgroupid > qgroupid)
+			n = n->rb_left;
 		else
 			return qgroup;
 	}
@@ -139,9 +139,9 @@ static struct btrfs_qgroup *add_qgroup_rb(struct btrfs_fs_info *fs_info,
 		qgroup = rb_entry(parent, struct btrfs_qgroup, node);
 
 		if (qgroup->qgroupid < qgroupid)
-			p = &(*p)->rb_left;
-		else if (qgroup->qgroupid > qgroupid)
 			p = &(*p)->rb_right;
+		else if (qgroup->qgroupid > qgroupid)
+			p = &(*p)->rb_left;
 		else
 			return qgroup;
 	}
