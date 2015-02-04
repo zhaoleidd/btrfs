@@ -423,6 +423,9 @@ struct btrfs_ioctl_get_dev_stats {
 #define BTRFS_QUOTA_CTL_ENABLE	1
 #define BTRFS_QUOTA_CTL_DISABLE	2
 #define BTRFS_QUOTA_CTL_RESCAN__NOTUSED	3
+#define BTRFS_QUOTA_CTL_STATUS  4
+
+#define BTRFS_QUOTA_STATUS_QUOTA_ENABLED 1
 struct btrfs_ioctl_quota_ctl_args {
 	__u64 cmd;
 	__u64 status;

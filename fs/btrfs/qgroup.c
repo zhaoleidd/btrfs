@@ -993,6 +993,20 @@ out:
 	return ret;
 }
 
+int btrfs_quota_status(struct btrfs_trans_handle *trans,
+			struct btrfs_fs_info *fs_info,
+			struct btrfs_ioctl_quota_ctl_args *sa)
+{
+	int ret = 0;
+
+	if (fs_info->quota_enabled)
+		sa->status |= BTRFS_QUOTA_STATUS_QUOTA_ENABLED;
+	else
+		sa->status &= ~BTRFS_QUOTA_STATUS_QUOTA_ENABLED;
+
+	return ret;
+}
+
 static void qgroup_dirty(struct btrfs_fs_info *fs_info,
 			 struct btrfs_qgroup *qgroup)
 {

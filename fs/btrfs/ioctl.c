@@ -4572,6 +4572,12 @@ static long btrfs_ioctl_quota_ctl(struct file *file, void __user *arg)
 	case BTRFS_QUOTA_CTL_DISABLE:
 		ret = btrfs_quota_disable(trans, root->fs_info);
 		break;
+	case BTRFS_QUOTA_CTL_STATUS:
+		ret = btrfs_quota_status(trans, root->fs_info, sa);
+		if (!ret)
+			if (copy_to_user(arg, sa, sizeof(*sa)))
+				ret = -EFAULT;
+		break;
 	default:
 		ret = -EINVAL;
 		break;
