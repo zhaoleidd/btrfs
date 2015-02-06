@@ -753,9 +753,6 @@ retry:
 			}
 			goto out_free;
 		}
-		btrfs_qgroup_update_reserved_bytes(root->fs_info,
-						   root->root_key.objectid,
-						   ins.offset, 1);
 		/*
 		 * here we're doing allocation and writeback of the
 		 * compressed pages
@@ -979,10 +976,6 @@ static noinline int cow_file_range(struct inode *inode,
 					   &ins, 1, 1);
 		if (ret < 0)
 			goto out_unlock;
-
-		btrfs_qgroup_update_reserved_bytes(root->fs_info,
-						   root->root_key.objectid,
-						   ins.offset, 1);
 
 		em = alloc_extent_map();
 		if (!em) {
@@ -6905,10 +6898,6 @@ static struct extent_map *btrfs_new_extent_direct(struct inode *inode,
 		return ERR_PTR(ret);
 	}
 
-	btrfs_qgroup_update_reserved_bytes(root->fs_info,
-					   root->root_key.objectid,
-					   ins.offset, 1);
-
 	return em;
 }
 
@@ -9462,10 +9451,6 @@ static int __btrfs_prealloc_file_range(struct inode *inode, int mode,
 				btrfs_end_transaction(trans, root);
 			break;
 		}
-
-		btrfs_qgroup_update_reserved_bytes(root->fs_info,
-						   root->root_key.objectid,
-						   ins.offset, 1);
 
 		btrfs_drop_extent_cache(inode, cur_offset,
 					cur_offset + ins.offset -1, 0);
