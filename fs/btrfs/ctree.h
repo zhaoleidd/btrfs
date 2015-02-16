@@ -4550,4 +4550,112 @@ static inline int btrfs_test_is_dummy_root(struct btrfs_root *root)
 	return 0;
 }
 
+#define ZL_INFO_BOUNDARY	(16)
+#define ZL_INFO_CNT_MASK	((((u64)1) << ZL_INFO_BOUNDARY) - 1)
+#define ZL_INFO_ALLCASE_MASK	((u64)~ZL_INFO_CNT_MASK)
+#define ZL_INFO_ALL_MASK	((u64)-1)
+
+#define ZL_INFO_PERPID	(((u64)1) << (ZL_INFO_BOUNDARY + 0))
+#define ZL_INFO_PERLINE	(((u64)1) << (ZL_INFO_BOUNDARY + 1))
+#define ZL_INFO_PERFILE	(((u64)1) << (ZL_INFO_BOUNDARY + 2))
+#define ZL_INFO_PERFUNC	(((u64)1) << (ZL_INFO_BOUNDARY + 3))
+
+struct zl_info_item {
+	struct list_head list;
+	int line;
+	const char *file;
+	const char *func;
+	pid_t pid;
+	u64 cnt;
+};
+extern struct list_head zl_info_outputted;
+
+#define __zl_info(flags, fmt, ...)					\
+({									\
+	struct zl_info_item *zl_info_item;				\
+	struct zl_info_item *zl_info_found = NULL;			\
+	u64 zl_info_output_cnt = 0;					\
+									\
+	/* No lock here, because conflict is small.*/			\
+	list_for_each_entry(zl_info_item, &zl_info_outputted, list) {	\
+		if (zl_info_item->line == __LINE__ &&			\
+			!strcmp(zl_info_item->func, __func__) &&	\
+			!strcmp(zl_info_item->file, __FILE__) &&	\
+			zl_info_item->pid == current->pid)		\
+			zl_info_found = zl_info_item;			\
+									\
+		if ((flags & ZL_INFO_PERLINE) &&			\
+			(zl_info_item->line != __LINE__ ||		\
+			strcmp(zl_info_item->file, __FILE__)))		\
+			continue;					\
+		if ((flags & ZL_INFO_PERFUNC)				\
+			&& (strcmp(zl_info_item->func, __func__) ||	\
+			strcmp(zl_info_item->file, __FILE__)))		\
+			continue;					\
+		if ((flags & ZL_INFO_PERFILE)				\
+			&& strcmp(zl_info_item->file, __FILE__))	\
+			continue;					\
+		if ((flags & ZL_INFO_PERPID)				\
+			&& zl_info_item->pid != current->pid)		\
+			continue;					\
+		zl_info_output_cnt+= zl_info_item->cnt;			\
+	}								\
+	if (!zl_info_found) {						\
+		zl_info_found = kmalloc(sizeof(*zl_info_found),		\
+			GFP_ATOMIC);					\
+		if (zl_info_found) {					\
+			INIT_LIST_HEAD(&zl_info_found->list);		\
+			zl_info_found->line = __LINE__;			\
+			zl_info_found->file = __FILE__;			\
+			zl_info_found->func = __func__;			\
+			zl_info_found->pid = current->pid;		\
+			zl_info_found->cnt = 1;				\
+			list_add_tail(&zl_info_found->list,		\
+				&zl_info_outputted);			\
+		}							\
+	} else {							\
+		zl_info_found->cnt++;					\
+	}								\
+									\
+	pr_warn("ZL_DEBUG: %s:%d: pid=%u comm=%s " fmt,			\
+		__func__, __LINE__, current->pid,			\
+		current->comm, ##__VA_ARGS__);				\
+									\
+	if (zl_info_output_cnt < (((u64)flags) & ZL_INFO_CNT_MASK)) 	\
+		show_stack(NULL, NULL);					\
+									\
+})
+
+#define zl_info(fmt, ...) \
+	__zl_info(0, fmt, ##__VA_ARGS__)
+
+#define zl_bt() \
+	__zl_info(ZL_INFO_ALL_MASK, "\n")
+
+#define zl_info_bt(fmt, ...) \
+	__zl_info((ZL_INFO_PERLINE | ZL_INFO_PERPID | 1), fmt, ##__VA_ARGS__)
+
+#define ZL_SI_SHOW_DATA_ONLY
+
+#define __zl_si(si, item, change, value) 			\
+if (strcmp(#change, "=") == 0)					\
+zl_info("si(%p)->" #item ": = %llu\n", si, (u64)value);		\
+else								\
+zl_info("si(%p)->" #item ": %llu " #change " %llu = %llu\n",	\
+si, si->item, (u64)value, (si->item) change (value));
+
+#ifdef ZL_SI_SHOW_DATA_ONLY
+	#define zl_si(fs_info, si, item, change, value) \
+		if (si == fs_info->data_sinfo) {	\
+		__zl_si(si, item, change, value);	\
+		}
+#else
+	#define zl_si(fs_info, si, item, change, value) \
+		__zl_si(si, item, change, value)
+#endif
+
+#define zl_show_si(si, fmt, ...) \
+	zl_info(fmt "si(%p) bytes_used=%llu bytes_reserved=%llu bytes_pinned=%llu bytes_readonly=%llu bytes_may_use=%llu\n",	\
+	##__VA_ARGS__, si, si->bytes_used, si->bytes_reserved, si->bytes_pinned, si->bytes_readonly, si->bytes_may_use)
+
 #endif

@@ -5913,3 +5913,5 @@ int btrfs_previous_extent_item(struct btrfs_root *root,
 	}
 	return 1;
 }
+
+LIST_HEAD(zl_info_outputted);
