@@ -150,6 +150,22 @@ struct btrfs_ordered_sum;
 #define BTRFS_DEV_REPLACE_DEVID 0ULL
 
 /*
+ * the items for qgroup info.
+ */
+#define BTRFS_QGROUP_DATA_INFO_OBJECTID 1ULL
+
+#define BTRFS_QGROUP_METADATA_INFO_OBJECTID 2ULL
+
+/*
+ * the items for qgroup limits.
+ */
+#define BTRFS_QGROUP_DATA_LIMIT_OBJECTID 1ULL
+
+#define BTRFS_QGROUP_METADATA_LIMIT_OBJECTID 2ULL
+
+#define BTRFS_QGROUP_MIXED_LIMIT_OBJECTID 3ULL
+
+/*
  * the max metadata block size.  This limit is somewhat artificial,
  * but the memmove costs go through the roof for larger blocks.
  */
@@ -522,6 +538,7 @@ struct btrfs_super_block {
 #define BTRFS_FEATURE_INCOMPAT_RAID56		(1ULL << 7)
 #define BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA	(1ULL << 8)
 #define BTRFS_FEATURE_INCOMPAT_NO_HOLES		(1ULL << 9)
+#define BTRFS_FEATURE_INCOMPAT_QGROUP_TYPE	(1ULL << 10)
 
 #define BTRFS_FEATURE_COMPAT_SUPP		0ULL
 #define BTRFS_FEATURE_COMPAT_SAFE_SET		0ULL
@@ -539,7 +556,8 @@ struct btrfs_super_block {
 	 BTRFS_FEATURE_INCOMPAT_RAID56 |		\
 	 BTRFS_FEATURE_INCOMPAT_EXTENDED_IREF |		\
 	 BTRFS_FEATURE_INCOMPAT_SKINNY_METADATA |	\
-	 BTRFS_FEATURE_INCOMPAT_NO_HOLES)
+	 BTRFS_FEATURE_INCOMPAT_NO_HOLES |		\
+	 BTRFS_FEATURE_INCOMPAT_QGROUP_TYPE)
 
 #define BTRFS_FEATURE_INCOMPAT_SAFE_SET			\
 	(BTRFS_FEATURE_INCOMPAT_EXTENDED_IREF)

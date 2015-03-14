@@ -372,7 +372,19 @@ int btrfs_read_qgroup_config(struct btrfs_fs_info *fs_info)
 			struct btrfs_qgroup_info_item *ptr;
 			struct btrfs_qgroup_info *info;
 
-			info = &qgroup->data_info;
+			/*
+			 * In newer qgroup, we store the quota data in
+			 * different info_items.
+			 */
+			if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+				info = &qgroup->data_info;
+			} else {
+				if (found_key.objectid == BTRFS_QGROUP_DATA_INFO_OBJECTID)
+					info = &qgroup->data_info;
+				else
+					info = &qgroup->metadata_info;
+			}
+
 			ptr = btrfs_item_ptr(l, slot,
 					     struct btrfs_qgroup_info_item);
 			info->rfer = btrfs_qgroup_info_rfer(l, ptr);
@@ -386,7 +398,17 @@ int btrfs_read_qgroup_config(struct btrfs_fs_info *fs_info)
 			struct btrfs_qgroup_limit_item *ptr;
 			struct btrfs_qgroup_limits *limits;
 
-			limits = &qgroup->mixed_limits;
+			if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+				limits = &qgroup->mixed_limits;
+			} else {
+				if (found_key.objectid == BTRFS_QGROUP_DATA_LIMIT_OBJECTID)
+					limits = &qgroup->data_limits;
+				else if (found_key.objectid == BTRFS_QGROUP_METADATA_LIMIT_OBJECTID)
+					limits = &qgroup->metadata_limits;
+				else
+					limits = &qgroup->mixed_limits;
+			}
+
 			ptr = btrfs_item_ptr(l, slot,
 					     struct btrfs_qgroup_limit_item);
 			limits->lim_flags = btrfs_qgroup_limit_flags(l, ptr);
@@ -563,7 +585,10 @@ static int add_qgroup_item(struct btrfs_trans_handle *trans,
 	if (!path)
 		return -ENOMEM;
 
-	key.objectid = 0;
+	if (!btrfs_fs_incompat(quota_root->fs_info, QGROUP_TYPE))
+		key.objectid = 0;
+	else
+		key.objectid = BTRFS_QGROUP_DATA_INFO_OBJECTID;
 	key.type = BTRFS_QGROUP_INFO_KEY;
 	key.offset = qgroupid;
 
@@ -573,6 +598,7 @@ static int add_qgroup_item(struct btrfs_trans_handle *trans,
 	 * on disk.
 	 */
 
+info_again:
 	ret = btrfs_insert_empty_item(trans, quota_root, path, &key,
 				      sizeof(*qgroup_info));
 	if (ret && ret != -EEXIST)
@@ -588,10 +614,20 @@ static int add_qgroup_item(struct btrfs_trans_handle *trans,
 	btrfs_set_qgroup_info_excl_cmpr(leaf, qgroup_info, 0);
 
 	btrfs_mark_buffer_dirty(leaf);
-
 	btrfs_release_path(path);
 
+	if (btrfs_fs_incompat(quota_root->fs_info, QGROUP_TYPE) &&
+	    key.objectid != BTRFS_QGROUP_METADATA_INFO_OBJECTID) {
+		key.objectid++;
+		goto info_again;
+	}
+
+	if (btrfs_fs_incompat(quota_root->fs_info, QGROUP_TYPE))
+		key.objectid = BTRFS_QGROUP_DATA_LIMIT_OBJECTID;
+
 	key.type = BTRFS_QGROUP_LIMIT_KEY;
+
+limits_again:
 	ret = btrfs_insert_empty_item(trans, quota_root, path, &key,
 				      sizeof(*qgroup_limit));
 	if (ret && ret != -EEXIST)
@@ -607,6 +643,13 @@ static int add_qgroup_item(struct btrfs_trans_handle *trans,
 	btrfs_set_qgroup_limit_rsv_excl(leaf, qgroup_limit, 0);
 
 	btrfs_mark_buffer_dirty(leaf);
+	btrfs_release_path(path);
+
+	if (btrfs_fs_incompat(quota_root->fs_info, QGROUP_TYPE) &&
+	    key.objectid != BTRFS_QGROUP_MIXED_LIMIT_OBJECTID) {
+		key.objectid++;
+		goto limits_again;
+	}
 
 	ret = 0;
 out:
@@ -625,9 +668,15 @@ static int del_qgroup_item(struct btrfs_trans_handle *trans,
 	if (!path)
 		return -ENOMEM;
 
-	key.objectid = 0;
+	if (!btrfs_fs_incompat(quota_root->fs_info, QGROUP_TYPE))
+		key.objectid = 0;
+	else
+		key.objectid = BTRFS_QGROUP_DATA_INFO_OBJECTID;
+
 	key.type = BTRFS_QGROUP_INFO_KEY;
 	key.offset = qgroupid;
+
+info_again:
 	ret = btrfs_search_slot(trans, quota_root, &key, path, -1, 1);
 	if (ret < 0)
 		goto out;
@@ -643,7 +692,18 @@ static int del_qgroup_item(struct btrfs_trans_handle *trans,
 
 	btrfs_release_path(path);
 
+	if (btrfs_fs_incompat(quota_root->fs_info, QGROUP_TYPE) &&
+	    key.objectid != BTRFS_QGROUP_METADATA_INFO_OBJECTID) {
+		key.objectid++;
+		goto info_again;
+	}
+
+	if (btrfs_fs_incompat(quota_root->fs_info, QGROUP_TYPE))
+		key.objectid = BTRFS_QGROUP_DATA_LIMIT_OBJECTID;
+
 	key.type = BTRFS_QGROUP_LIMIT_KEY;
+
+limits_again:
 	ret = btrfs_search_slot(trans, quota_root, &key, path, -1, 1);
 	if (ret < 0)
 		goto out;
@@ -654,6 +714,13 @@ static int del_qgroup_item(struct btrfs_trans_handle *trans,
 	}
 
 	ret = btrfs_del_item(trans, quota_root, path);
+	btrfs_release_path(path);
+
+	if (btrfs_fs_incompat(quota_root->fs_info, QGROUP_TYPE) &&
+	    key.objectid != BTRFS_QGROUP_MIXED_LIMIT_OBJECTID) {
+		key.objectid++;
+		goto limits_again;
+	}
 
 out:
 	btrfs_free_path(path);
