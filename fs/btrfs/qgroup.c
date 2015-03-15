@@ -2525,33 +2525,56 @@ int btrfs_qgroup_inherit(struct btrfs_trans_handle *trans,
 		srcgroup = find_qgroup_rb(fs_info, srcid);
 		if (!srcgroup)
 			goto unlock;
-		/*
-		 * FIXME: use the data_info to store all information currently.
-		 * will seperate the information into data and metadata later.
-		 **/
 		dstinfo = &dstgroup->data_info;
 		srcinfo = &srcgroup->data_info;
 
-		/*
-		 * We call inherit after we clone the root in order to make sure
-		 * our counts don't go crazy, so at this point the only
-		 * difference between the two roots should be the root node.
-		 */
-		dstinfo->rfer = srcinfo->rfer;
-		dstinfo->rfer_cmpr = srcinfo->rfer_cmpr;
-		dstinfo->excl = level_size;
-		dstinfo->excl_cmpr = level_size;
-		srcinfo->excl = level_size;
-		srcinfo->excl_cmpr = level_size;
+		if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+			/*
+			 * We call inherit after we clone the root in order to make sure
+			 * our counts don't go crazy, so at this point the only
+			 * difference between the two roots should be the root node.
+			 */
+			dstinfo->rfer = srcinfo->rfer;
+			dstinfo->rfer_cmpr = srcinfo->rfer_cmpr;
+			dstinfo->excl = level_size;
+			dstinfo->excl_cmpr = level_size;
+			srcinfo->excl = level_size;
+			srcinfo->excl_cmpr = level_size;
+		} else {
+			dstinfo->rfer = srcinfo->rfer;
+			dstinfo->rfer_cmpr = srcinfo->rfer_cmpr;
+			/*
+			 * add the metadata for dstqgroup.
+			 */
+			dstinfo = &dstgroup->metadata_info;
+			dstinfo->rfer = level_size;
+			dstinfo->rfer_cmpr = level_size;
+			dstinfo->excl = level_size;
+			dstinfo->excl_cmpr = level_size;
+			srcinfo->excl = 0;
+			srcinfo->excl_cmpr = 0;
+		}
 
-		dstlimits = &dstgroup->mixed_limits;
-		srclimits = &srcgroup->mixed_limits;
+		if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+			dstlimits = &dstgroup->mixed_limits;
+			srclimits = &srcgroup->mixed_limits;
+		} else {
+			dstlimits = &dstgroup->data_limits;
+			srclimits = &srcgroup->data_limits;
+		}
 		/* inherit the limit info */
+again:
 		dstlimits->lim_flags = srclimits->lim_flags;
 		dstlimits->max_rfer = srclimits->max_rfer;
 		dstlimits->max_excl = srclimits->max_excl;
 		dstlimits->rsv_rfer = srclimits->rsv_rfer;
 		dstlimits->rsv_excl = srclimits->rsv_excl;
+
+		if (dstlimits != &dstgroup->mixed_limits) {
+			dstlimits++;
+			srclimits++;
+			goto again;
+		}
 
 		qgroup_dirty(fs_info, dstgroup);
 		qgroup_dirty(fs_info, srcgroup);
