@@ -1322,6 +1322,7 @@ int btrfs_limit_qgroup(struct btrfs_trans_handle *trans,
 	struct btrfs_root *quota_root;
 	struct btrfs_qgroup *qgroup;
 	struct btrfs_qgroup_limits *limits;
+	u8 limits_type = get_limit_type(limit->flags);
 	int ret = 0;
 
 	mutex_lock(&fs_info->qgroup_ioctl_lock);
@@ -1337,9 +1338,12 @@ int btrfs_limit_qgroup(struct btrfs_trans_handle *trans,
 		goto out;
 	}
 
-	/* To the compatibility, treat the mixed limits as the
-	 * default limits now. will change it later. */
-	limits = &qgroup->mixed_limits;
+	if (limits_type == BTRFS_QGROUP_LIMIT_DATA)
+		limits = &qgroup->data_limits;
+	else if (limits_type == BTRFS_QGROUP_LIMIT_METADATA)
+		limits = &qgroup->metadata_limits;
+	else
+		limits = &qgroup->mixed_limits;
 
 	spin_lock(&fs_info->qgroup_lock);
 	if (limit->flags & BTRFS_QGROUP_LIMIT_MAX_RFER)

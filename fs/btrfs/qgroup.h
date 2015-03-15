@@ -36,6 +36,32 @@
 #define BTRFS_QGROUP_REF_TYPE_DEFAULT	BTRFS_QGROUP_REF_TYPE_DATA
 
 /*
+ * As we can account and limit data and metadata in
+ * a qgroup separately. We use the first 8 bits in
+ * btrfs_qgroup_limit->flags to specify the type we
+ * want to limit. Currently, there are three choice:
+ * DATA, METADATA, MIXED.
+ */
+#define BTRFS_QGROUP_LIMIT_TYPE_SHIFT   56
+
+#define BTRFS_QGROUP_LIMIT_DATA         1
+#define BTRFS_QGROUP_LIMIT_METADATA     2
+#define BTRFS_QGROUP_LIMIT_MIXED        4
+
+static inline u8 get_limit_type(u64 flag)
+{
+        u8 type = (flag >> BTRFS_QGROUP_LIMIT_TYPE_SHIFT);
+	/*
+	 * If user did not set the type for limit, default
+	 * for mixed_limits;
+	 */
+	if (!type)
+		type = BTRFS_QGROUP_LIMIT_MIXED;
+	return type;
+}
+
+
+/*
  * A description of the operations, all of these operations only happen when we
  * are adding the 1st reference for that subvolume in the case of adding space
  * or on the last reference delete in the case of subtraction.  The only
