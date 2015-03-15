@@ -440,7 +440,8 @@ start_transaction(struct btrfs_root *root, u64 num_items, unsigned int type,
 		if (root->fs_info->quota_enabled &&
 		    is_fstree(root->root_key.objectid)) {
 			qgroup_reserved = num_items * root->nodesize;
-			ret = btrfs_qgroup_reserve(root, qgroup_reserved);
+			ret = btrfs_qgroup_reserve(root, qgroup_reserved,
+						   BTRFS_QGROUP_REF_TYPE_METADATA);
 			if (ret)
 				return ERR_PTR(ret);
 		}
@@ -555,7 +556,7 @@ alloc_fail:
 					num_bytes);
 reserve_fail:
 	if (qgroup_reserved)
-		btrfs_qgroup_free(root, qgroup_reserved);
+		btrfs_qgroup_free(root, qgroup_reserved, BTRFS_QGROUP_REF_TYPE_METADATA);
 	return ERR_PTR(ret);
 }
 
@@ -777,7 +778,7 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 		 * the same root has to be passed here between start_transaction
 		 * and end_transaction. Subvolume quota depends on this.
 		 */
-		btrfs_qgroup_free(trans->root, trans->qgroup_reserved);
+		btrfs_qgroup_free(trans->root, trans->qgroup_reserved, BTRFS_QGROUP_REF_TYPE_METADATA);
 		trans->qgroup_reserved = 0;
 	}
 
@@ -1788,7 +1789,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans,
 	btrfs_trans_release_metadata(trans, root);
 	trans->block_rsv = NULL;
 	if (trans->qgroup_reserved) {
-		btrfs_qgroup_free(root, trans->qgroup_reserved);
+		btrfs_qgroup_free(root, trans->qgroup_reserved, BTRFS_QGROUP_REF_TYPE_METADATA);
 		trans->qgroup_reserved = 0;
 	}
 
@@ -2087,7 +2088,7 @@ cleanup_transaction:
 	btrfs_trans_release_metadata(trans, root);
 	trans->block_rsv = NULL;
 	if (trans->qgroup_reserved) {
-		btrfs_qgroup_free(root, trans->qgroup_reserved);
+		btrfs_qgroup_free(root, trans->qgroup_reserved, BTRFS_QGROUP_REF_TYPE_METADATA);
 		trans->qgroup_reserved = 0;
 	}
 	btrfs_warn(root->fs_info, "Skipping commit of aborted transaction.");

@@ -239,7 +239,8 @@ static int test_no_shared_qgroup(struct btrfs_root *root)
 	}
 
 	ret = btrfs_qgroup_record_ref(&trans, fs_info, 5, 4096, 4096,
-				      BTRFS_QGROUP_OPER_ADD_EXCL, 0);
+				      BTRFS_QGROUP_OPER_ADD_EXCL,
+				      BTRFS_QGROUP_REF_TYPE_DEFAULT, 0);
 	if (ret) {
 		test_msg("Couldn't add space to a qgroup %d\n", ret);
 		return ret;
@@ -265,7 +266,8 @@ static int test_no_shared_qgroup(struct btrfs_root *root)
 		return -EINVAL;
 
 	ret = btrfs_qgroup_record_ref(&trans, fs_info, 5, 4096, 4096,
-				      BTRFS_QGROUP_OPER_SUB_EXCL, 0);
+				      BTRFS_QGROUP_OPER_SUB_EXCL,
+				      BTRFS_QGROUP_REF_TYPE_DEFAULT, 0);
 	if (ret) {
 		test_msg("Couldn't remove space from the qgroup %d\n", ret);
 		return -EINVAL;
@@ -312,7 +314,8 @@ static int test_multiple_refs(struct btrfs_root *root)
 		return ret;
 
 	ret = btrfs_qgroup_record_ref(&trans, fs_info, 5, 4096, 4096,
-				      BTRFS_QGROUP_OPER_ADD_EXCL, 0);
+				      BTRFS_QGROUP_OPER_ADD_EXCL,
+				      BTRFS_QGROUP_REF_TYPE_DEFAULT, 0);
 	if (ret) {
 		test_msg("Couldn't add space to a qgroup %d\n", ret);
 		return ret;
@@ -334,7 +337,8 @@ static int test_multiple_refs(struct btrfs_root *root)
 		return ret;
 
 	ret = btrfs_qgroup_record_ref(&trans, fs_info, 256, 4096, 4096,
-				      BTRFS_QGROUP_OPER_ADD_SHARED, 0);
+				      BTRFS_QGROUP_OPER_ADD_SHARED,
+				      BTRFS_QGROUP_REF_TYPE_DEFAULT, 0);
 	if (ret) {
 		test_msg("Qgroup record ref failed %d\n", ret);
 		return ret;
@@ -361,7 +365,8 @@ static int test_multiple_refs(struct btrfs_root *root)
 		return ret;
 
 	ret = btrfs_qgroup_record_ref(&trans, fs_info, 256, 4096, 4096,
-				      BTRFS_QGROUP_OPER_SUB_SHARED, 0);
+				      BTRFS_QGROUP_OPER_SUB_SHARED,
+				      BTRFS_QGROUP_REF_TYPE_DEFAULT, 0);
 	if (ret) {
 		test_msg("Qgroup record ref failed %d\n", ret);
 		return ret;

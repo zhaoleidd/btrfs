@@ -83,7 +83,7 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 				u64 root_objectid, u64 owner_objectid,
 				u64 owner_offset, int refs_to_drop,
 				struct btrfs_delayed_extent_op *extra_op,
-				int no_quota);
+				int no_quota, unsigned int quota_type);
 static void __run_delayed_extent_op(struct btrfs_delayed_extent_op *extent_op,
 				    struct extent_buffer *leaf,
 				    struct btrfs_extent_item *ei);
@@ -1971,7 +1971,8 @@ static int __btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 				  u64 parent, u64 root_objectid,
 				  u64 owner, u64 offset, int refs_to_add,
 				  int no_quota,
-				  struct btrfs_delayed_extent_op *extent_op)
+				  struct btrfs_delayed_extent_op *extent_op,
+				  unsigned int quota_type)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_path *path;
@@ -2013,7 +2014,8 @@ static int __btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 		btrfs_release_path(path);
 
 		ret = btrfs_qgroup_record_ref(trans, fs_info, root_objectid,
-					      bytenr, num_bytes, type, 0);
+					      bytenr, num_bytes, type,
+					      quota_type, 0);
 		goto out;
 	}
 
@@ -2037,7 +2039,8 @@ static int __btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 
 	if (!no_quota) {
 		ret = btrfs_qgroup_record_ref(trans, fs_info, root_objectid,
-					      bytenr, num_bytes, type, 0);
+					      bytenr, num_bytes, type,
+					      quota_type, 0);
 		if (ret)
 			goto out;
 	}
@@ -2091,13 +2094,15 @@ static int run_delayed_data_ref(struct btrfs_trans_handle *trans,
 					     node->num_bytes, parent,
 					     ref_root, ref->objectid,
 					     ref->offset, node->ref_mod,
-					     node->no_quota, extent_op);
+					     node->no_quota, extent_op,
+					     BTRFS_QGROUP_REF_TYPE_DATA);
 	} else if (node->action == BTRFS_DROP_DELAYED_REF) {
 		ret = __btrfs_free_extent(trans, root, node->bytenr,
 					  node->num_bytes, parent,
 					  ref_root, ref->objectid,
 					  ref->offset, node->ref_mod,
-					  extent_op, node->no_quota);
+					  extent_op, node->no_quota,
+					  BTRFS_QGROUP_REF_TYPE_DATA);
 	} else {
 		BUG();
 	}
@@ -2258,12 +2263,12 @@ static int run_delayed_tree_ref(struct btrfs_trans_handle *trans,
 		ret = __btrfs_inc_extent_ref(trans, root, node->bytenr,
 					     node->num_bytes, parent, ref_root,
 					     ref->level, 0, 1, node->no_quota,
-					     extent_op);
+					     extent_op, BTRFS_QGROUP_REF_TYPE_METADATA);
 	} else if (node->action == BTRFS_DROP_DELAYED_REF) {
 		ret = __btrfs_free_extent(trans, root, node->bytenr,
 					  node->num_bytes, parent, ref_root,
 					  ref->level, 0, 1, extent_op,
-					  node->no_quota);
+					  node->no_quota, BTRFS_QGROUP_REF_TYPE_METADATA);
 	} else {
 		BUG();
 	}
@@ -3736,7 +3741,7 @@ commit_trans:
 					      data_sinfo->flags, bytes, 1);
 		return -ENOSPC;
 	}
-	ret = btrfs_qgroup_reserve(root, write_bytes);
+	ret = btrfs_qgroup_reserve(root, write_bytes, BTRFS_QGROUP_REF_TYPE_DATA);
 	if (ret)
 		goto out;
 	data_sinfo->bytes_may_use += bytes;
@@ -4971,7 +4976,7 @@ int btrfs_subvolume_reserve_metadata(struct btrfs_root *root,
 	if (root->fs_info->quota_enabled) {
 		/* One for parent inode, two for dir entries */
 		num_bytes = 3 * root->nodesize;
-		ret = btrfs_qgroup_reserve(root, num_bytes);
+		ret = btrfs_qgroup_reserve(root, num_bytes, BTRFS_QGROUP_REF_TYPE_METADATA);
 		if (ret)
 			return ret;
 	} else {
@@ -4991,7 +4996,7 @@ int btrfs_subvolume_reserve_metadata(struct btrfs_root *root,
 
 	if (ret) {
 		if (*qgroup_reserved)
-			btrfs_qgroup_free(root, *qgroup_reserved);
+			btrfs_qgroup_free(root, *qgroup_reserved, BTRFS_QGROUP_REF_TYPE_METADATA);
 	}
 
 	return ret;
@@ -5165,7 +5170,8 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	spin_unlock(&BTRFS_I(inode)->lock);
 
 	if (root->fs_info->quota_enabled) {
-		ret = btrfs_qgroup_reserve(root, nr_extents * root->nodesize);
+		ret = btrfs_qgroup_reserve(root, nr_extents * root->nodesize,
+					   BTRFS_QGROUP_REF_TYPE_METADATA);
 		if (ret)
 			goto out_fail;
 	}
@@ -5173,7 +5179,8 @@ int btrfs_delalloc_reserve_metadata(struct inode *inode, u64 num_bytes)
 	ret = reserve_metadata_bytes(root, block_rsv, to_reserve, flush);
 	if (unlikely(ret)) {
 		if (root->fs_info->quota_enabled)
-			btrfs_qgroup_free(root, nr_extents * root->nodesize);
+			btrfs_qgroup_free(root, nr_extents * root->nodesize,
+					  BTRFS_QGROUP_REF_TYPE_METADATA);
 		goto out_fail;
 	}
 
@@ -5834,7 +5841,7 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 				u64 root_objectid, u64 owner_objectid,
 				u64 owner_offset, int refs_to_drop,
 				struct btrfs_delayed_extent_op *extent_op,
-				int no_quota)
+				int no_quota, unsigned int quota_type)
 {
 	struct btrfs_key key;
 	struct btrfs_path *path;
@@ -6104,7 +6111,7 @@ static int __btrfs_free_extent(struct btrfs_trans_handle *trans,
 
 		ret = btrfs_qgroup_record_ref(trans, info, root_objectid,
 					      bytenr, num_bytes, type,
-					      mod_seq);
+					      quota_type, mod_seq);
 	}
 out:
 	btrfs_free_path(path);
@@ -7045,7 +7052,8 @@ static int alloc_reserved_file_extent(struct btrfs_trans_handle *trans,
 	/* Always set parent to 0 here since its exclusive anyway. */
 	ret = btrfs_qgroup_record_ref(trans, fs_info, root_objectid,
 				      ins->objectid, ins->offset,
-				      BTRFS_QGROUP_OPER_ADD_EXCL, 0);
+				      BTRFS_QGROUP_OPER_ADD_EXCL,
+				      BTRFS_QGROUP_REF_TYPE_DATA, 0);
 	if (ret)
 		return ret;
 
@@ -7133,7 +7141,8 @@ static int alloc_reserved_tree_block(struct btrfs_trans_handle *trans,
 	if (!no_quota) {
 		ret = btrfs_qgroup_record_ref(trans, fs_info, root_objectid,
 					      ins->objectid, num_bytes,
-					      BTRFS_QGROUP_OPER_ADD_EXCL, 0);
+					      BTRFS_QGROUP_OPER_ADD_EXCL,
+					      BTRFS_QGROUP_REF_TYPE_METADATA, 0);
 		if (ret)
 			return ret;
 	}
@@ -7511,7 +7520,8 @@ static int account_leaf_items(struct btrfs_trans_handle *trans,
 		ret = btrfs_qgroup_record_ref(trans, root->fs_info,
 					      root->objectid,
 					      bytenr, num_bytes,
-					      BTRFS_QGROUP_OPER_SUB_SUBTREE, 0);
+					      BTRFS_QGROUP_OPER_SUB_SUBTREE,
+					      BTRFS_QGROUP_REF_TYPE_METADATA, 0);
 		if (ret)
 			return ret;
 	}
@@ -7661,7 +7671,7 @@ walk_down:
 						child_bytenr,
 						root->nodesize,
 						BTRFS_QGROUP_OPER_SUB_SUBTREE,
-						0);
+						BTRFS_QGROUP_REF_TYPE_METADATA, 0);
 			if (ret)
 				goto out;
 

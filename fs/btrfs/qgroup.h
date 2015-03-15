@@ -20,6 +20,22 @@
 #define __BTRFS_QGROUP__
 
 /*
+ * Type for quota reference. Caller of qgroup_record_ref()
+ * should choose one type of the reference passed to qgroup.
+ * Then qgroup will account the reference in the chosen info.
+ */
+#define BTRFS_QGROUP_REF_TYPE_DATA          (1 << 0)
+#define BTRFS_QGROUP_REF_TYPE_METADATA      (1 << 1)
+
+/*
+ * To keep the compatibility, define a default type to manage
+ * the all reference in the older kernel. Choose the data_info
+ * to account all reference in older kernel which did not record
+ * and account reference for data and metadata separately.
+ */
+#define BTRFS_QGROUP_REF_TYPE_DEFAULT	BTRFS_QGROUP_REF_TYPE_DATA
+
+/*
  * A description of the operations, all of these operations only happen when we
  * are adding the 1st reference for that subvolume in the case of adding space
  * or on the last reference delete in the case of subtraction.  The only
@@ -53,6 +69,10 @@ struct btrfs_qgroup_operation {
 	u64 num_bytes;
 	u64 seq;
 	enum btrfs_qgroup_operation_type type;
+	/*
+	 * DATA or METADATA;
+	 **/
+	unsigned int quota_type;
 	struct seq_list elem;
 	struct rb_node n;
 	struct list_head list;
@@ -86,6 +106,7 @@ int btrfs_qgroup_record_ref(struct btrfs_trans_handle *trans,
 			    struct btrfs_fs_info *fs_info, u64 ref_root,
 			    u64 bytenr, u64 num_bytes,
 			    enum btrfs_qgroup_operation_type type,
+			    unsigned int quota_type,
 			    int mod_seq);
 int btrfs_delayed_qgroup_accounting(struct btrfs_trans_handle *trans,
 				    struct btrfs_fs_info *fs_info);
@@ -97,8 +118,8 @@ int btrfs_run_qgroups(struct btrfs_trans_handle *trans,
 int btrfs_qgroup_inherit(struct btrfs_trans_handle *trans,
 			 struct btrfs_fs_info *fs_info, u64 srcid, u64 objectid,
 			 struct btrfs_qgroup_inherit *inherit);
-int btrfs_qgroup_reserve(struct btrfs_root *root, u64 num_bytes);
-void btrfs_qgroup_free(struct btrfs_root *root, u64 num_bytes);
+int btrfs_qgroup_reserve(struct btrfs_root *root, u64 num_bytes, u8 type);
+void btrfs_qgroup_free(struct btrfs_root *root, u64 num_bytes, u8 type);
 
 void assert_qgroups_uptodate(struct btrfs_trans_handle *trans);
 

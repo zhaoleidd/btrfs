@@ -1451,7 +1451,8 @@ static int insert_qgroup_oper(struct btrfs_fs_info *fs_info,
 int btrfs_qgroup_record_ref(struct btrfs_trans_handle *trans,
 			    struct btrfs_fs_info *fs_info, u64 ref_root,
 			    u64 bytenr, u64 num_bytes,
-			    enum btrfs_qgroup_operation_type type, int mod_seq)
+			    enum btrfs_qgroup_operation_type type,
+			    unsigned int quota_type, int mod_seq)
 {
 	struct btrfs_qgroup_operation *oper;
 	int ret;
@@ -1467,6 +1468,7 @@ int btrfs_qgroup_record_ref(struct btrfs_trans_handle *trans,
 	oper->bytenr = bytenr;
 	oper->num_bytes = num_bytes;
 	oper->type = type;
+	oper->quota_type = quota_type;
 	oper->seq = atomic_inc_return(&fs_info->qgroup_op_seq);
 	INIT_LIST_HEAD(&oper->elem.list);
 	oper->elem.seq = 0;
@@ -1542,11 +1544,14 @@ static int qgroup_excl_accounting(struct btrfs_fs_info *fs_info,
 		ASSERT(0);
 	}
 
-	/*
-	 * FIXME: use the data_info to store all information currently.
-	 * will seperate the information into data and metadata later.
-	 **/
-	info = &qgroup->data_info;
+	if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+		info = &qgroup->data_info;
+	} else {
+		if (oper->quota_type == BTRFS_QGROUP_REF_TYPE_DATA)
+			info = &qgroup->data_info;
+		else
+			info = &qgroup->metadata_info;
+	}
 
 	info->rfer += sign * oper->num_bytes;
 	info->rfer_cmpr += sign * oper->num_bytes;
@@ -1571,11 +1576,14 @@ static int qgroup_excl_accounting(struct btrfs_fs_info *fs_info,
 	ULIST_ITER_INIT(&uiter);
 	while ((unode = ulist_next(tmp, &uiter))) {
 		qgroup = u64_to_ptr(unode->aux);
-		/*
-		 * FIXME: use the data_info to store all information currently.
-		 * will seperate the information into data and metadata later.
-		 **/
-		info = &qgroup->data_info;
+		if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+			info = &qgroup->data_info;
+		} else {
+			if (oper->quota_type == BTRFS_QGROUP_REF_TYPE_DATA)
+				info = &qgroup->data_info;
+			else
+				info = &qgroup->metadata_info;
+		}
 		info->rfer += sign * oper->num_bytes;
 		info->rfer_cmpr += sign * oper->num_bytes;
 		WARN_ON(sign < 0 && info->excl < oper->num_bytes);
@@ -1842,13 +1850,14 @@ static int qgroup_calc_new_refcnt(struct btrfs_fs_info *fs_info,
  */
 static int qgroup_adjust_counters(struct btrfs_fs_info *fs_info,
 				  u64 root_to_skip, u64 num_bytes,
-				  struct ulist *qgroups, u64 seq,
-				  int old_roots, int new_roots, int rescan)
+				  u8 quota_type, struct ulist *qgroups,
+				  u64 seq, int old_roots, int new_roots,
+				  int rescan)
 {
 	struct ulist_node *unode;
 	struct ulist_iterator uiter;
 	struct btrfs_qgroup *qg;
-	struct btrfs_qgroup_info *data_info;
+	struct btrfs_qgroup_info *info;
 	u64 cur_new_count, cur_old_count;
 
 	ULIST_ITER_INIT(&uiter);
@@ -1857,14 +1866,21 @@ static int qgroup_adjust_counters(struct btrfs_fs_info *fs_info,
 
 		qg = u64_to_ptr(unode->aux);
 
-		data_info = &qg->data_info;
+		if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+			info = &qg->data_info;
+		} else {
+			if (quota_type == BTRFS_QGROUP_REF_TYPE_DATA)
+				info = &qg->data_info;
+			else
+				info = &qg->metadata_info;
+		}
 		/*
 		 * Wasn't referenced before but is now, add to the reference
 		 * counters.
 		 */
 		if (qg->old_refcnt <= seq && qg->new_refcnt > seq) {
-			data_info->rfer += num_bytes;
-			data_info->rfer_cmpr += num_bytes;
+			info->rfer += num_bytes;
+			info->rfer_cmpr += num_bytes;
 			dirty = true;
 		}
 
@@ -1873,8 +1889,8 @@ static int qgroup_adjust_counters(struct btrfs_fs_info *fs_info,
 		 * reference counters.
 		 */
 		if (qg->old_refcnt > seq && qg->new_refcnt <= seq) {
-			data_info->rfer -= num_bytes;
-			data_info->rfer_cmpr -= num_bytes;
+			info->rfer -= num_bytes;
+			info->rfer_cmpr -= num_bytes;
 			dirty = true;
 		}
 
@@ -1895,13 +1911,8 @@ static int qgroup_adjust_counters(struct btrfs_fs_info *fs_info,
 		if (old_roots && cur_old_count == old_roots &&
 		    (cur_new_count != new_roots || new_roots == 0)) {
 			WARN_ON(cur_new_count != new_roots && new_roots == 0);
-			/*
-			 * FIXME: use the data_info to store all information currently.
-			 * will seperate the information into data and metadata later.
-			 **/
-			data_info = &qg->data_info;
-			data_info->excl -= num_bytes;
-			data_info->excl_cmpr -= num_bytes;
+			info->excl -= num_bytes;
+			info->excl_cmpr -= num_bytes;
 			dirty = true;
 		}
 
@@ -1911,13 +1922,8 @@ static int qgroup_adjust_counters(struct btrfs_fs_info *fs_info,
 		 */
 		if ((!old_roots || (old_roots && cur_old_count != old_roots))
 		    && cur_new_count == new_roots) {
-			/*
-			 * FIXME: use the data_info to store all information currently.
-			 * will seperate the information into data and metadata later.
-			 **/
-			data_info = &qg->data_info;
-			data_info->excl += num_bytes;
-			data_info->excl_cmpr += num_bytes;
+			info->excl += num_bytes;
+			info->excl_cmpr += num_bytes;
 			dirty = true;
 		}
 
@@ -2102,7 +2108,8 @@ static int qgroup_shared_accounting(struct btrfs_trans_handle *trans,
 	 * solution for this.
 	 */
 	qgroup_adjust_counters(fs_info, oper->ref_root, oper->num_bytes,
-			       qgroups, seq, old_roots, new_roots, 0);
+			       oper->quota_type, qgroups, seq, old_roots,
+			       new_roots, 0);
 out:
 	spin_unlock(&fs_info->qgroup_lock);
 	ulist_free(qgroups);
@@ -2171,11 +2178,16 @@ static int qgroup_subtree_accounting(struct btrfs_trans_handle *trans,
 	qg = find_qgroup_rb(fs_info, root_obj);
 	if (!qg)
 		goto out_unlock;
-	/*
-	 * FIXME: use the data_info to store all information currently.
-	 * will seperate the information into data and metadata later.
-	 **/
-	info = &qg->data_info;
+
+	if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+		info = &qg->data_info;
+	} else {
+		if (oper->quota_type == BTRFS_QGROUP_REF_TYPE_DATA)
+			info = &qg->data_info;
+		else
+			info = &qg->metadata_info;
+	}
+
 	info->excl += oper->num_bytes;
 	info->excl_cmpr += oper->num_bytes;
 	qgroup_dirty(fs_info, qg);
@@ -2197,11 +2209,15 @@ static int qgroup_subtree_accounting(struct btrfs_trans_handle *trans,
 	ULIST_ITER_INIT(&uiter);
 	while ((unode = ulist_next(parents, &uiter))) {
 		qg = u64_to_ptr(unode->aux);
-		/*
-		 * FIXME: use the data_info to store all information currently.
-		 * will seperate the information into data and metadata later.
-		 **/
-		info = &qg->data_info;
+
+		if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+			info = &qg->data_info;
+		} else {
+			if (oper->quota_type == BTRFS_QGROUP_REF_TYPE_DATA)
+				info = &qg->data_info;
+			else
+				info = &qg->metadata_info;
+		}
 		info->excl += oper->num_bytes;
 		info->excl_cmpr += oper->num_bytes;
 		qgroup_dirty(fs_info, qg);
@@ -2579,12 +2595,47 @@ out:
 	return ret;
 }
 
-int btrfs_qgroup_reserve(struct btrfs_root *root, u64 num_bytes)
+static int exceed_limits(struct btrfs_qgroup_info *info,
+			 struct btrfs_qgroup_limits *limits,
+			 struct btrfs_qgroup_info *another_info,
+			 u64 num_bytes)
+{
+	if (another_info) {
+		/*
+		 * For the mixed limits.
+		 */
+		if ((limits->lim_flags & BTRFS_QGROUP_LIMIT_MAX_EXCL) &&
+		    info->reserved + (s64)info->excl +
+		    another_info->reserved + (s64)another_info->excl +
+		    num_bytes > limits->max_excl)
+			return 1;
+
+		if ((limits->lim_flags & BTRFS_QGROUP_LIMIT_MAX_RFER) &&
+		    info->reserved + (s64)info->rfer +
+		    another_info->reserved + (s64)another_info->rfer +
+		    num_bytes > limits->max_rfer)
+			return 1;
+		
+	} else {
+		if ((limits->lim_flags & BTRFS_QGROUP_LIMIT_MAX_EXCL) &&
+		    info->reserved + (s64)info->excl + num_bytes >
+		    limits->max_excl)
+			return 1;
+
+		if ((limits->lim_flags & BTRFS_QGROUP_LIMIT_MAX_RFER) &&
+		    info->reserved + (s64)info->rfer + num_bytes >
+		    limits->max_rfer)
+			return 1;
+	}
+
+	return 0;
+}
+
+int btrfs_qgroup_reserve(struct btrfs_root *root, u64 num_bytes, u8 type)
 {
 	struct btrfs_root *quota_root;
 	struct btrfs_qgroup *qgroup;
-	struct btrfs_qgroup_info *data_info;
-	struct btrfs_qgroup_limits *mixed_limits;
+	struct btrfs_qgroup_info *info;
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	u64 ref_root = root->root_key.objectid;
 	int ret = 0;
@@ -2617,33 +2668,32 @@ int btrfs_qgroup_reserve(struct btrfs_root *root, u64 num_bytes)
 		goto out;
 	ULIST_ITER_INIT(&uiter);
 	while ((unode = ulist_next(fs_info->qgroup_ulist, &uiter))) {
-		struct btrfs_qgroup *qg;
+		struct btrfs_qgroup *qgroup;
 		struct btrfs_qgroup_list *glist;
 
-		qg = u64_to_ptr(unode->aux);
+		qgroup = u64_to_ptr(unode->aux);
 
-		/*
-		 * FIXME: use the data_info to store all information currently.
-		 * will seperate the information into data and metadata later.
-		 **/
-		data_info = &qgroup->data_info;
-		mixed_limits = &qgroup->mixed_limits;
+		if (type == BTRFS_QGROUP_REF_TYPE_DATA) {
+			info = &qgroup->data_info;
+			if (exceed_limits(info, &qgroup->data_limits, NULL, num_bytes)) {
+				ret = -EDQUOT;
+				goto out;
+			}
+		} else {
+			info = &qgroup->metadata_info;
+			if (exceed_limits(info, &qgroup->metadata_limits, NULL, num_bytes)) {
+				ret = -EDQUOT;
+				goto out;
+			}
+		}
 
-		if ((mixed_limits->lim_flags & BTRFS_QGROUP_LIMIT_MAX_RFER) &&
-		    data_info->reserved + (s64)data_info->rfer + num_bytes >
-		    mixed_limits->max_rfer) {
+		if (exceed_limits(&qgroup->data_info, &qgroup->mixed_limits,
+				  &qgroup->metadata_info, num_bytes)) {
 			ret = -EDQUOT;
 			goto out;
 		}
 
-		if ((mixed_limits->lim_flags & BTRFS_QGROUP_LIMIT_MAX_EXCL) &&
-		    data_info->reserved + (s64)data_info->excl + num_bytes >
-		    mixed_limits->max_excl) {
-			ret = -EDQUOT;
-			goto out;
-		}
-
-		list_for_each_entry(glist, &qg->groups, next_group) {
+		list_for_each_entry(glist, &qgroup->groups, next_group) {
 			ret = ulist_add(fs_info->qgroup_ulist,
 					glist->group->qgroupid,
 					(uintptr_t)glist->group, GFP_ATOMIC);
@@ -2661,13 +2711,16 @@ int btrfs_qgroup_reserve(struct btrfs_root *root, u64 num_bytes)
 
 		qg = u64_to_ptr(unode->aux);
 
-		/*
-		 * FIXME: use the data_info to store all information currently.
-		 * will seperate the information into data and metadata later.
-		 **/
-		data_info = &qg->data_info;
+		if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+			info = &qg->data_info;
+		} else {
+			if (type == BTRFS_QGROUP_REF_TYPE_DATA)
+				info = &qg->data_info;
+			else
+				info = &qg->metadata_info;
+		}
 
-		data_info->reserved += num_bytes;
+		info->reserved += num_bytes;
 	}
 
 out:
@@ -2675,11 +2728,11 @@ out:
 	return ret;
 }
 
-void btrfs_qgroup_free(struct btrfs_root *root, u64 num_bytes)
+void btrfs_qgroup_free(struct btrfs_root *root, u64 num_bytes, u8 type)
 {
 	struct btrfs_root *quota_root;
 	struct btrfs_qgroup *qgroup;
-	struct btrfs_qgroup_info *data_info;
+	struct btrfs_qgroup_info *info;
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct ulist_node *unode;
 	struct ulist_iterator uiter;
@@ -2714,13 +2767,16 @@ void btrfs_qgroup_free(struct btrfs_root *root, u64 num_bytes)
 
 		qg = u64_to_ptr(unode->aux);
 
-		/*
-		 * FIXME: use the data_info to store all information currently.
-		 * will seperate the information into data and metadata later.
-		 **/
-		data_info = &qg->data_info;
+		if (!btrfs_fs_incompat(fs_info, QGROUP_TYPE)) {
+			info = &qg->data_info;
+		} else {
+			if (type == BTRFS_QGROUP_REF_TYPE_DATA)
+				info = &qg->data_info;
+			else
+				info = &qg->metadata_info;
+		}
 
-		data_info->reserved -= num_bytes;
+		info->reserved -= num_bytes;
 
 		list_for_each_entry(glist, &qg->groups, next_group) {
 			ret = ulist_add(fs_info->qgroup_ulist,
@@ -2830,7 +2886,7 @@ qgroup_rescan_leaf(struct btrfs_fs_info *fs_info, struct btrfs_path *path,
 			goto out;
 		}
 
-		ret = qgroup_adjust_counters(fs_info, 0, num_bytes, qgroups,
+		ret = qgroup_adjust_counters(fs_info, 0, num_bytes, 0, qgroups,
 					     seq, 0, new_roots, 1);
 		if (ret < 0) {
 			spin_unlock(&fs_info->qgroup_lock);
@@ -2979,22 +3035,25 @@ qgroup_rescan_zero_tracking(struct btrfs_fs_info *fs_info)
 {
 	struct rb_node *n;
 	struct btrfs_qgroup *qgroup;
-	struct btrfs_qgroup_info *data_info;
+	struct btrfs_qgroup_info *info;
 
 	spin_lock(&fs_info->qgroup_lock);
 	/* clear all current qgroup tracking information */
 	for (n = rb_first(&fs_info->qgroup_tree); n; n = rb_next(n)) {
 		qgroup = rb_entry(n, struct btrfs_qgroup, node);
-		/*
-		 * FIXME: use the data_info to store all information currently.
-		 * will seperate the information into data and metadata later.
-		 **/
-		data_info = &qgroup->data_info;
 
-		data_info->rfer = 0;
-		data_info->rfer_cmpr = 0;
-		data_info->excl = 0;
-		data_info->excl_cmpr = 0;
+		info = &qgroup->data_info;
+
+again:
+		info->rfer = 0;
+		info->rfer_cmpr = 0;
+		info->excl = 0;
+		info->excl_cmpr = 0;
+
+		if (info != &qgroup->metadata_info) {
+			info = &qgroup->metadata_info;
+			goto again;
+		}
 	}
 	spin_unlock(&fs_info->qgroup_lock);
 }
