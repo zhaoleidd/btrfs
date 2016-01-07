@@ -103,6 +103,9 @@ static void __reada_start_machine(struct btrfs_fs_info *fs_info);
 static int reada_add_block(struct reada_control *rc, u64 logical,
 			   struct btrfs_key *top, u64 generation);
 
+/* To limit max reada works */
+static atomic_t works_cnt = ATOMIC_INIT(0);
+
 /* recurses */
 /* in case of err, eb might be NULL */
 static void __readahead_hook(struct btrfs_fs_info *fs_info,
@@ -754,6 +757,8 @@ static void reada_start_machine_worker(struct btrfs_work *work)
 	set_task_ioprio(current, BTRFS_IOPRIO_READA);
 	__reada_start_machine(fs_info);
 	set_task_ioprio(current, old_ioprio);
+
+	atomic_dec(&works_cnt);
 }
 
 static void __reada_start_machine(struct btrfs_fs_info *fs_info)
@@ -785,8 +790,11 @@ static void __reada_start_machine(struct btrfs_fs_info *fs_info)
 	 * enqueue to workers to finish it. This will distribute the load to
 	 * the cores.
 	 */
-	for (i = 0; i < 2; ++i)
+	for (i = 0; i < 2; ++i) {
 		reada_start_machine(fs_info);
+		if (atomic_read(&works_cnt) > BTRFS_MAX_MIRRORS * 2)
+			break;
+	}
 }
 
 static void reada_start_machine(struct btrfs_fs_info *fs_info)
@@ -803,6 +811,7 @@ static void reada_start_machine(struct btrfs_fs_info *fs_info)
 	rmw->fs_info = fs_info;
 
 	btrfs_queue_work(fs_info->readahead_workers, &rmw->work);
+	atomic_inc(&works_cnt);
 }
 
 #ifdef DEBUG
